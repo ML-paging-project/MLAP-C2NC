@@ -25,7 +25,7 @@ window = 256
 class Trace:
     def __init__(self, tn):
         if tn == adv:
-            self.seq = [ix for ix in range(60000)]
+            self.seq = [ix for ix in range(30000)]
         else:
             self.seq = read_crc_seq('datasets/{0}_test.csv'.format(tn))
         self.name = tn
@@ -96,28 +96,32 @@ def hybrid_parallel_paging(hybrid_code, alpha):
     models[1].load_model('pp_models/xgb_model_k128_b4_w256_s200_d256_r300')
     models[2].load_model('pp_models/xgb_model_k128_b3_w256_s200_d256_r300')
     models[3].load_model('pp_models/xgb_model_k128_b2_w256_s200_d256_r300')
+
     packed_traces = {}
     finished = {}
+    just_completed_box = []
     running_time = 0
     available_memory = k
+
     # initiate
     for name in trace_names:
         test_traces[name] = Trace(name)
         test_traces[name].init_hybrid(models[0], number_of_box_kinds, hybrid_code)
-        test_traces[name] = format_box_nc(test_traces[name], s)
+        # test_traces[name] = format_box_nc(test_traces[name], s)
 
     while len(finished.keys()) != len(trace_names):
-        test_traces, packed_traces, finished, available_memory, running_time = pack_and_run(test_traces,
-                                                                                            packed_traces,
-                                                                                            finished,
-                                                                                            available_memory,
-                                                                                            running_time,
-                                                                                            phase,
-                                                                                            None,
-                                                                                            'hybrid',
-                                                                                            models,
-                                                                                            hybrid_code,
-                                                                                            alpha)
+        test_traces, packed_traces, finished, available_memory, \
+        running_time, just_completed_box = pack_and_run(just_completed_box, test_traces,
+                                                        packed_traces,
+                                                        finished,
+                                                        available_memory,
+                                                        running_time,
+                                                        phase,
+                                                        None,
+                                                        'hybrid',
+                                                        models,
+                                                        hybrid_code,
+                                                        alpha)
 
         # phasing
         phase_change = False
@@ -176,6 +180,7 @@ def xgb_parallel_paging():
     finished = {}
     running_time = 0
     available_memory = k
+    just_completed_box = []
 
     # initiate
     for name in trace_names:
@@ -188,15 +193,16 @@ def xgb_parallel_paging():
                                                        window)])
             test_traces[name].box_height = k / (2 ** model.predict(fea)[0])
         test_traces[name].box_width = 2 * test_traces[name].box_height * s
-        test_traces[name] = format_box_nc(test_traces[name], s)
+        # test_traces[name] = format_box_nc(test_traces[name], s)
 
     while len(finished.keys()) != len(trace_names):
-        test_traces, packed_traces, finished, available_memory, running_time = pack_and_run(test_traces,
-                                                                                            packed_traces,
-                                                                                            finished,
-                                                                                            available_memory,
-                                                                                            running_time,
-                                                                                            phase, model, 'xgb')
+        test_traces, packed_traces, finished, available_memory, \
+        running_time, just_completed_box = pack_and_run(just_completed_box, test_traces,
+                                                        packed_traces,
+                                                        finished,
+                                                        available_memory,
+                                                        running_time,
+                                                        phase, model, 'xgb')
         # phasing
         phase_change = False
         if 8 >= len(trace_names) - len(finished.keys()) > 4 and phase != 1:
@@ -224,13 +230,13 @@ def xgb_parallel_paging():
                                                                    test_traces[name].box_start_pointer,
                                                                    window)])
                         test_traces[name].box_height = k / (2 ** model.predict(fea)[0])
-                    test_traces[name] = format_box_nc(test_traces[name], miss_cost=s)
+                    # test_traces[name] = format_box_nc(test_traces[name], miss_cost=s)
         if len(trace_names) - len(finished.keys()) == 1 and phase != 4:
             phase = 4
             for name in trace_names:
                 if name not in finished.keys():
                     test_traces[name].box_height = k
-                    test_traces[name] = format_box_nc(test_traces[name], miss_cost=s)
+                    # test_traces[name] = format_box_nc(test_traces[name], miss_cost=s)
     print('xgb PP result:')
     print_results(test_traces)
 
@@ -242,20 +248,23 @@ def soda_parallel_paging():
     finished = {}
     running_time = 0
     available_memory = k
+    just_completed_box = []
 
     # initiate
     for name in trace_names:
         test_traces[name] = Trace(name)
-        test_traces[name] = format_box_nc(test_traces[name], s)
+        # test_traces[name] = format_box_nc(test_traces[name], s)
         print(test_traces[name].det_counter)
 
     while len(finished.keys()) != len(trace_names):
-        test_traces, packed_traces, finished, available_memory, running_time = pack_and_run(test_traces,
-                                                                                            packed_traces,
-                                                                                            finished,
-                                                                                            available_memory,
-                                                                                            running_time,
-                                                                                            phase, None, 'soda')
+        test_traces, packed_traces, finished, \
+        available_memory, running_time, just_completed_box = pack_and_run(just_completed_box,
+                                                                          test_traces,
+                                                                          packed_traces,
+                                                                          finished,
+                                                                          available_memory,
+                                                                          running_time,
+                                                                          phase, None, 'soda')
 
         # phasing
         phase_change = False
@@ -278,7 +287,7 @@ def soda_parallel_paging():
                     test_traces[name].det_counter[0] = 1
                     test_traces[name].box_kind = 0
                     test_traces[name].box_height = k / (16 / (2 ** phase))
-                    test_traces[name] = format_box_nc(test_traces[name], miss_cost=s)
+                    # test_traces[name] = format_box_nc(test_traces[name], miss_cost=s)
 
     print('SODA PP result:')
     print_results(test_traces)
@@ -290,29 +299,31 @@ def evenly_split():
     finished = {}
     running_time = 0
     available_memory = k
+    just_completed_box = []
 
     # initiate
     for name in trace_names:
         test_traces[name] = Trace(name)
         test_traces[name].box_height = int(k / len(trace_names))
         test_traces[name].box_width = int(k / len(trace_names)) * s * 2
-        test_traces[name] = format_box_nc(test_traces[name], s)
+        # test_traces[name] = format_box_nc(test_traces[name], s)
 
     while len(finished.keys()) != len(trace_names):
         old_len = len(finished)
-        test_traces, packed_traces, finished, available_memory, running_time = pack_and_run(test_traces,
-                                                                                            packed_traces,
-                                                                                            finished,
-                                                                                            available_memory,
-                                                                                            running_time,
-                                                                                            -1, None, 'ES')
+        test_traces, packed_traces, finished, available_memory, \
+        running_time, just_completed_box = pack_and_run(just_completed_box, test_traces,
+                                                        packed_traces,
+                                                        finished,
+                                                        available_memory,
+                                                        running_time,
+                                                        -1, None, 'ES')
 
         # phasing
         if old_len != len(finished):
             for name in trace_names:
                 if name not in finished.keys():
                     test_traces[name].box_height = int(k / (len(trace_names) - len(finished)))
-                    test_traces[name] = format_box_nc(test_traces[name], miss_cost=s)
+                    # test_traces[name] = format_box_nc(test_traces[name], miss_cost=s)
 
     print('Evenly split PP result')
     print_results(test_traces)
@@ -382,7 +393,7 @@ def sequential_schedule():
 
 def test_round_robin():
     print('Round robin')
-    repeat = 100
+    repeat = 10
     avg_complete = 0
     max_complete = 0
     for t in range(repeat):
@@ -401,20 +412,22 @@ def round_robin():
     finished = {}
     running_time = 0
     available_memory = k
+    just_complete_box = []
 
     # initiate
     for name in trace_names:
         test_traces[name] = Trace(name)
         test_traces[name].box_height = k
-        test_traces[name] = format_box_nc(test_traces[name], s)
+        # test_traces[name] = format_box_nc(test_traces[name], s)
 
     while len(finished.keys()) != len(trace_names):
-        test_traces, packed_traces, finished, available_memory, running_time = pack_and_run(test_traces,
-                                                                                            packed_traces,
-                                                                                            finished,
-                                                                                            available_memory,
-                                                                                            running_time,
-                                                                                            -1, None, 'RR')
+        test_traces, packed_traces, finished, available_memory, \
+        running_time, just_complete_box = pack_and_run(just_complete_box, test_traces,
+                                                       packed_traces,
+                                                       finished,
+                                                       available_memory,
+                                                       running_time,
+                                                       -1, None, 'RR')
 
     avg_complete = 0
     max_complete = 0
@@ -426,7 +439,7 @@ def round_robin():
     return avg_complete, max_complete
 
 
-def pack_and_run(test_traces, packed_traces, finished,
+def pack_and_run(just_completed_box, test_traces, packed_traces, finished,
                  available_memory, running_time,
                  phase, model, policy, model_array=None,
                  hybrid_code='', alpha=0):
@@ -445,6 +458,9 @@ def pack_and_run(test_traces, packed_traces, finished,
         if next_trace == '':
             break
 
+        if next_trace not in just_completed_box:
+            test_traces[next_trace].box_start_stack = OrderedDict()
+        test_traces[next_trace] = format_box_nc(test_traces[next_trace], s)
         # pack
         next_box_height = test_traces[next_trace].box_height
         next_box_width = test_traces[next_trace].box_width
@@ -479,6 +495,7 @@ def pack_and_run(test_traces, packed_traces, finished,
             next_time_point = packed_traces[trace]['end_time']
     running_time = next_time_point
 
+    just_completed_box = []
     for trace in list(packed_traces):
         if packed_traces[trace]['end_time'] == running_time:
             available_memory += packed_traces[trace]['mem_size']
@@ -486,9 +503,11 @@ def pack_and_run(test_traces, packed_traces, finished,
             if packed_traces[trace]['last']:
                 finished[trace] = True
                 # test_traces[trace].completion_time += (packed_traces[trace]['mem_size'] * s)
+            else:
+                just_completed_box.append(trace)
             packed_traces.pop(trace)
 
-    return test_traces, packed_traces, finished, available_memory, running_time
+    return test_traces, packed_traces, finished, available_memory, running_time, just_completed_box
 
 
 def find_next_by_hybrid(t, phase, models, number_of_box_kinds,
@@ -547,7 +566,7 @@ def find_next_by_hybrid(t, phase, models, number_of_box_kinds,
             t.det_counter[t.det_box_kind] = t.det_counter[t.det_box_kind] + 1
             t.box_height = k / (2 ** (number_of_box_kinds - t.det_box_kind - 1))
         t.box_width = t.box_height
-    t = format_box_nc(t, s)
+    # t = format_box_nc(t, s)
     return t
 
 
@@ -565,7 +584,7 @@ def find_next_by_xgb(t, phase, model):
                                                    window)])
         t.box_height = k / (2 ** model.predict(fea)[0])
     t.box_width = t.box_height * s * 2
-    t = format_box_nc(t, s)
+    # t = format_box_nc(t, s)
     return t
 
 
@@ -584,7 +603,7 @@ def find_next_by_soda(t):
     t.det_counter[t.box_kind] += 1
     t.box_height = k / (2 ** (len(t.det_counter) - t.box_kind - 1))
     t.box_width = t.box_height * s * 2
-    t = format_box_nc(t, s)
+    # t = format_box_nc(t, s)
     return t
 
 
@@ -596,7 +615,7 @@ def find_next_by_evenly_split(t, trace_number):
         t.box_start_stack.move_to_end(pid, last=True)
     t.box_height = int(k / trace_number)
     t.box_width = t.box_height * 2 * s
-    t = format_box_nc(t, s)
+    # t = format_box_nc(t, s)
     return t
 
 
@@ -608,7 +627,7 @@ def find_next_rr(t):
         t.box_start_stack.move_to_end(pid, last=True)
     t.box_height = k
     t.box_width = t.box_height * 2 * s
-    t = format_box_nc(t, s)
+    # t = format_box_nc(t, s)
     return t
 
 
@@ -627,4 +646,4 @@ def print_results(traces):
 # if you want to see what happens when one processor is adversarial
 # enable next line
 # trace_names.append(adv)
-hybrid_parallel_paging('1.2', 1)
+xgb_parallel_paging()
