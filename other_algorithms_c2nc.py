@@ -37,8 +37,8 @@ def random_pick(sequence, k, number_of_box_kinds, miss_cost):
     return total_impact / rounds
 
 
-def deterministic_algorithm(sequence, k, number_of_box_kinds, miss_cost):
-    print('running deterministic algorithm...')
+def soda_lru(sequence, k, number_of_box_kinds, miss_cost):
+    print('running soda w/ lru...')
     counting = [0 for _ in range(number_of_box_kinds)]
     counting[0] = 1
     current_box = 0
@@ -84,6 +84,98 @@ def deterministic_algorithm(sequence, k, number_of_box_kinds, miss_cost):
 
     # flush out the last box
     total_impact += (len(my_cache) * previous_size * miss_cost)
+    while len(req2mi) < pointer:
+        req2mi.append(total_impact)
+        req2box.append(current_box)
+        req2counter.append(counting)
+    return total_impact, box_seq, req2box, req2counter, req2mi
+
+
+def soda_marking(sequence, k, number_of_box_kinds, miss_cost):
+    print('running soda with marking')
+    counting = [0 for _ in range(number_of_box_kinds)]
+    counting[0] = 1
+    current_box = 0
+    pointer = 0
+    total_impact = 0
+    box_seq = []
+    marked_cache = {}
+    unmarked_cache = {}
+    req2counter = []
+    req2box = []
+    req2mi = []
+    cache_size = int(k / (2 ** (number_of_box_kinds - current_box - 1)))
+    previous_size = 0
+    while pointer < len(sequence):
+        box_seq.append(number_of_box_kinds - current_box - 1)
+
+        # flush out
+        while len(marked_cache) + len(unmarked_cache) > cache_size:
+            total_impact += (miss_cost * previous_size)
+            if len(unmarked_cache) > 0:
+                popk = list(unmarked_cache.keys())[random.randint(0,
+                                                                  len(unmarked_cache) - 1)]
+                unmarked_cache.pop(popk)
+            else:
+                popk = list(marked_cache.keys())[random.randint(0,
+                                                                len(marked_cache) - 1)]
+                marked_cache.pop(popk)
+
+        # run a new box
+        # start_pointer = pointer
+        box_width = miss_cost * cache_size * 2
+        remain_width = box_width
+        total_impact += (box_width * cache_size)
+        while remain_width > 0 and pointer < len(sequence):
+            if len(marked_cache) == cache_size:
+                for thing in marked_cache:
+                    unmarked_cache[thing] = 1
+                marked_cache.clear()
+
+            if sequence[pointer] in marked_cache or sequence[pointer] in unmarked_cache:
+                remain_width -= 1
+            else:
+                remain_width -= miss_cost
+
+            if sequence[pointer] in unmarked_cache:
+                unmarked_cache.pop(sequence[pointer])
+
+            marked_cache[sequence[pointer]] = 1
+
+            while len(marked_cache) + len(unmarked_cache) > cache_size:
+                # print('mmmmm',len(unmarked_cache) - 1)
+                popk = list(unmarked_cache.keys())[random.randint(0,
+                                                                  len(unmarked_cache) - 1)]
+                unmarked_cache.pop(popk)
+
+            pointer += 1
+        total_impact -= (remain_width * cache_size)
+
+        # for hybrid paging
+        while len(req2box) < pointer:
+            req2box.append(current_box)
+            req2counter.append(counting)
+
+        # get new box
+        previous_size = cache_size
+        if current_box == number_of_box_kinds - 1:
+            current_box = 0
+        elif counting[current_box] % 4 == 0:
+            current_box = current_box + 1
+        else:
+            current_box = 0
+        counting[current_box] = counting[current_box] + 1
+        cache_size = int(k / (2 ** (number_of_box_kinds - current_box - 1)))
+
+        # for hybrid paging
+        if pointer < len(sequence):
+            while len(req2mi) < pointer:
+                req2mi.append(total_impact +
+                              miss_cost * previous_size *
+                              max(0, len(marked_cache) + len(unmarked_cache) - cache_size))
+
+    # flush out the last box
+    total_impact += (len(marked_cache) + len(unmarked_cache) * previous_size * miss_cost)
     while len(req2mi) < pointer:
         req2mi.append(total_impact)
         req2box.append(current_box)

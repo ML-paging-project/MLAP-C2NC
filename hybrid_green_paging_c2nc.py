@@ -17,10 +17,7 @@ def hybrid_green_paging(sequence, k, miss_cost, number_of_box_kinds,
         for tt in ttt:
             xgb_req2mi.append(tt)
     # simulate soda
-    _, _, soda_req2box, soda_req2counter, soda_req2mi = oa.deterministic_algorithm(sequence,
-                                                                                   k,
-                                                                                   number_of_box_kinds,
-                                                                                   miss_cost)
+    _, _, soda_req2box, soda_req2counter, soda_req2mi = oa.soda_lru(sequence, k, number_of_box_kinds, miss_cost)
 
     soda_box_counting = [0 for _ in range(number_of_box_kinds)]
     soda_box_counting[0] = 1

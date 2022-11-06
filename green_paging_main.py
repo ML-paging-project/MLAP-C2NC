@@ -8,22 +8,22 @@ import matplotlib.pyplot as plt
 
 import tool
 import xgboost_module_c2nc as xgbm
-from other_algorithms_c2nc import deterministic_algorithm, random_pick, fixed_size
+from other_algorithms_c2nc import soda_lru, soda_marking, random_pick, fixed_size
 from hybrid_green_paging_c2nc import hybrid_green_paging
 
 
 def main():
     # paging parameters
-    k = 128
-    number_of_box_kinds = 8
+    k = 64
+    number_of_box_kinds = 7
     window_size = 256
-    miss_cost = 200
-    alpha = [1, 1]
+    miss_cost = 100
+    alpha = [1, 1.5]
     check_length = 10000
 
     # model parameters
-    max_depth = 256
-    training_round = 300  # training rounds
+    max_depth = 5
+    training_round = 10  # training rounds
     params = {
         'objective': 'multi:softmax',
         'eta': 0.1,
@@ -110,9 +110,8 @@ def main():
                                       trace_name == 'z_adversary', check_length, xgb_req2mi)
 
         print('######### testing other methods ############')
-        det_impact, det_boxes, _, _, _ = deterministic_algorithm(test_seq, k,
-                                                                 number_of_box_kinds,
-                                                                 miss_cost)
+        det_impact, det_boxes, _, _, _ = soda_lru(test_seq, k, number_of_box_kinds, miss_cost)
+        mark_impact, _, _, _, _ = soda_marking(test_seq, k, number_of_box_kinds, miss_cost)
         random_impact = random_pick(test_seq, k, number_of_box_kinds, miss_cost)
 
         print('oracle:       ', int(xgb_impact))
@@ -126,9 +125,9 @@ def main():
                             miss_cost) for iii in range(int(math.log2(k)) + 1)]
 
         # draw plot
-        methods = ['Random', 'SODA', 'Oracle', 'H1.2-' + str(alpha[0]),
+        methods = ['Random', 'SODA-LRU', 'SODA-MARK', 'Oracle', 'H1.2-' + str(alpha[0]),
                    'H3-' + str(alpha[1])]
-        v = [random_impact, det_impact, xgb_impact, hybrid1_2, hybrid3]
+        v = [random_impact, det_impact, mark_impact, xgb_impact, hybrid1_2, hybrid3]
         for iii in range(len(fixes)):
             methods.append('Fix' + str(2 ** iii))
             v.append(fixes[iii])

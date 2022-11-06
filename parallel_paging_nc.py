@@ -4,7 +4,8 @@
 
 import math
 from collections import OrderedDict
-from random import shuffle
+from random import shuffle, randint
+from copy import deepcopy
 
 import xgboost as xgb
 
@@ -17,8 +18,8 @@ adv = 'z_adversary'
 trace_names = ['astar', 'bwaves', 'bzip', 'cactusadm',
                'gems', 'lbm', 'leslie3d', 'libq', 'mcf',
                'milc', 'omnetpp', 'sphinx3', 'xalanc']
-k = 128
-s = 200
+k = 64
+s = 100
 window = 256
 
 
@@ -48,6 +49,11 @@ class Trace:
         self.det_box_kind = None
         self.check_point = 0
         self.run_oracle = True
+        # for marking algorithm
+        self.start_marked = {}
+        self.start_unmarked = {}
+        self.end_marked = {}
+        self.end_unmarked = {}
 
     def init_hybrid(self, model, number_of_box_kinds, hybrid_code):
         if self.name == adv:
@@ -60,7 +66,7 @@ class Trace:
             _, _, self.ml_req2mi = xgbm.test_xgboost_nc(model, self.seq, k, s, window,
                                                         self.name == adv)
         _, _, self.det_req2box, self.det_req2counter, self.det_req2mi = \
-            oa.deterministic_algorithm(self.seq, k, number_of_box_kinds, s)
+            oa.soda_lru(self.seq, k, number_of_box_kinds, s)
         self.det_box_kind = self.det_req2box[0]
         self.det_counter = []
         self.check_point = 0
@@ -154,10 +160,7 @@ def hybrid_parallel_paging(hybrid_code, alpha):
                                                                                      name == adv)
                         _, _, test_traces[name].det_req2box, \
                         test_traces[name].det_req2counter, \
-                        test_traces[name].det_req2mi = oa.deterministic_algorithm(test_traces[name].seq,
-                                                                                  k,
-                                                                                  number_of_box_kinds,
-                                                                                  s)
+                        test_traces[name].det_req2mi = oa.soda_lru(test_traces[name].seq, k, number_of_box_kinds, s)
                     test_traces[name] = find_next_by_hybrid(test_traces[name],
                                                             phase,
                                                             models,
@@ -241,7 +244,7 @@ def xgb_parallel_paging():
     print_results(test_traces)
 
 
-def soda_parallel_paging():
+def soda_lru_parallel_paging():
     test_traces = {}
     phase = 0
     packed_traces = {}
@@ -289,7 +292,132 @@ def soda_parallel_paging():
                     test_traces[name].box_height = k / (16 / (2 ** phase))
                     # test_traces[name] = format_box_nc(test_traces[name], miss_cost=s)
 
-    print('SODA PP result:')
+    print('SODA LRU PP result:')
+    print_results(test_traces)
+
+
+def soda_marking_parallel_paging():
+    test_traces = {}
+    phase = 0
+    packed_traces = {}
+    finished = {}
+    running_time = 0
+    available_memory = k
+    just_completed_box = []
+
+    # initiate
+    for name in trace_names:
+        test_traces[name] = Trace(name)
+
+    while len(finished.keys()) != len(trace_names):
+        while len(packed_traces.keys()) + len(finished) < len(trace_names):
+            # find the one to be packed
+            next_trace = ''
+            min_mi = math.inf
+            for name in trace_names:
+                if (name not in packed_traces) and \
+                        (name not in finished) and \
+                        test_traces[name].box_height <= available_memory and \
+                        test_traces[name].memory_impact < min_mi:
+                    min_mi = test_traces[name].memory_impact
+                    next_trace = name
+
+            if next_trace == '':
+                break
+
+            if next_trace not in just_completed_box:
+                test_traces[next_trace].start_marked.clear()
+                test_traces[next_trace].start_unmarked.clear()
+
+            # run marking
+            marked = deepcopy(test_traces[next_trace].start_marked)
+            unmarked = deepcopy(test_traces[next_trace].start_unmarked)
+            while len(marked) + len(unmarked) > test_traces[next_trace].box_height:
+                if len(unmarked) > 0:
+                    pop_key = list(unmarked.keys())[randint(0, len(unmarked) - 1)]
+                    unmarked.pop(pop_key)
+                else:
+                    pop_key = list(marked.keys())[randint(0, len(marked) - 1)]
+                    marked.pop(pop_key)
+
+            width = 2 * test_traces[next_trace].box_height * s
+            test_traces[next_trace].box_end_pointer = test_traces[next_trace].box_start_pointer
+            while width > 0 and test_traces[next_trace].box_end_pointer < len(test_traces[next_trace].seq):
+                if len(marked) == test_traces[next_trace].box_height:
+                    for thing in marked:
+                        unmarked[thing] = 1
+                    marked.clear()
+                req = test_traces[next_trace].seq[test_traces[next_trace].box_end_pointer]
+                if req in marked or req in unmarked:
+                    width -= 1
+                else:
+                    width -= s
+
+                if req in unmarked:
+                    unmarked.pop(req)
+                marked[req] = 1
+
+                while len(marked) + len(unmarked) > test_traces[next_trace].box_height:
+                    popk = list(unmarked.keys())[randint(0, len(unmarked) - 1)]
+                    unmarked.pop(popk)
+                test_traces[next_trace].box_end_pointer += 1
+            test_traces[next_trace].box_width = 2 * test_traces[next_trace].box_height * s - width
+            test_traces[next_trace].end_marked = deepcopy(marked)
+            test_traces[next_trace].end_unmarked = deepcopy(unmarked)
+            # pack
+            next_box_height = test_traces[next_trace].box_height
+            next_box_width = test_traces[next_trace].box_width
+            packed_traces[next_trace] = {'mem_size': next_box_height,
+                                         'end_time': running_time + next_box_width,
+                                         'last': test_traces[next_trace].box_end_pointer >= len(
+                                             test_traces[next_trace].seq)}
+            test_traces[next_trace].memory_impact += next_box_height * next_box_width
+            available_memory -= next_box_height
+            if test_traces[next_trace].box_end_pointer < len(test_traces[next_trace].seq):
+                test_traces[next_trace] = find_next_by_soda(test_traces[next_trace])
+
+        # find next decision time
+        next_time_point = math.inf
+        for trace in packed_traces.keys():
+            if packed_traces[trace]['end_time'] < next_time_point:
+                next_time_point = packed_traces[trace]['end_time']
+        running_time = next_time_point
+
+        just_completed_box = []
+        for trace in list(packed_traces):
+            if packed_traces[trace]['end_time'] == running_time:
+                available_memory += packed_traces[trace]['mem_size']
+                test_traces[trace].completion_time = running_time
+                if packed_traces[trace]['last']:
+                    finished[trace] = True
+                    # test_traces[trace].completion_time += (packed_traces[trace]['mem_size'] * s)
+                else:
+                    just_completed_box.append(trace)
+                packed_traces.pop(trace)
+        # phasing
+        phase_change = False
+        if 8 >= len(trace_names) - len(finished.keys()) > 4 and phase != 1:
+            phase = 1
+            phase_change = True
+        if 4 >= len(trace_names) - len(finished.keys()) > 2 and phase != 2:
+            phase = 2
+            phase_change = True
+        if len(trace_names) - len(finished.keys()) == 2 and phase != 3:
+            phase = 3
+            phase_change = True
+        if len(trace_names) - len(finished.keys()) == 1 and phase != 4:
+            phase = 4
+            phase_change = True
+        if phase_change:
+            for name in trace_names:
+                if name not in finished.keys():
+                    test_traces[name].det_counter = [0 for _ in range(5 - phase)]
+                    test_traces[name].det_counter[0] = 1
+                    test_traces[name].box_kind = 0
+                    test_traces[name].box_height = k / (16 / (2 ** phase))
+                    # test_traces[name] = format_box_nc(test_traces[name], miss_cost=s)
+
+    print('SODA MARKING PP result:')
     print_results(test_traces)
 
 
@@ -594,6 +722,12 @@ def find_next_by_soda(t):
     for pid in t.box_end_stack.keys():
         t.box_start_stack[pid] = True
         t.box_start_stack.move_to_end(pid, last=True)
+    t.start_marked.clear()
+    for pid in t.end_marked:
+        t.start_marked[pid] = 1
+    t.start_unmarked.clear()
+    for pid in t.end_unmarked:
+        t.start_unmarked[pid] = 1
     if t.box_kind == (len(t.det_counter) - 1):
         t.box_kind = 0
     elif t.det_counter[t.box_kind] % 4 == 0:
@@ -646,4 +780,4 @@ def print_results(traces):
 # if you want to see what happens when one processor is adversarial
 # enable next line
 # trace_names.append(adv)
-xgb_parallel_paging()
+soda_marking_parallel_paging()
